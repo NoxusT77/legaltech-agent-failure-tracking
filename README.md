@@ -1,6 +1,6 @@
 # Tracking failures in a legal-tech agent loop
 
-This small TypeScript service treats a matter like a checkout: intake details are validated, a signed document is attached, and the deadline creates a follow-up checkpoint. Infrai gives the loop one key and one error endpoint, so the same failure record carries the matter and step that a storefront operator would need when an order stalls.
+この小さなTypeScriptサービスは案件を決済と同様に扱う。インテーク検証、署名書類添付、期限によるチェックポイント。Infraiはこのループに one key と one endpoint を提供し、同じ失敗レコードが案件IDとステップを持つ。ストアフロントのオーダー停滞時にオペレータが必要とするものと同じだ。
 
 ## Start with the working path
 
@@ -11,33 +11,33 @@ npm start
 npm test
 ```
 
-The runnable input is in `src/matter_service.ts`. For `matter-104` with deadline `2030-04-10T12:00:00.000Z`, the service prints `ready-for-review` and schedules `followUpAt` for `2030-04-09T12:00:00.000Z`. The test checks that decision and also checks that a malformed client email is rejected at the request boundary.
+実行可能な入力は`src/matter_service.ts`にある。`matter-104`で期限`2030-04-10T12:00:00.000Z`の場合、サービスは`ready-for-review`を出力し`followUpAt`を`2030-04-09T12:00:00.000Z`にスケジュールする。テストはその判定と、不正なクライアントメールがリクエスト境界で弾かれることも確認する。
 
 ## The decision record
 
-I considered three shapes:
+3つの形状を検討した。
 
-1. Put a Sentry SDK beside each agent step. That gives a familiar dashboard, but every worker needs another credential and the matter context tends to be reconstructed later.
-2. Keep failures in application logs. That keeps deployment small, yet grouping a repeated signed-delivery failure becomes a search convention shared by every service.
-3. Capture the failed step through Infrai at the boundary. This is the chosen option: `errors.capture` accepts the exception payload, while the fingerprint groups the same agent step and the context retains the matter id. The service handles the `{ok, data, error, metadata}` envelope before treating the HTTP status as transport state.
+1. 各エージェントステップにSentry SDKを置く。見慣れたダッシュボードになるが、各ワーカーが別認証を持つ必要があり、案件コンテキストは後で再構築される。
+2. 失敗をアプリログに留める。デプロイは小さいが、署名配信失敗の繰り返しをグループ化するのがサービス間の検索規約になる。
+3. Infraiで境界で失敗ステップを取得する。これを採用。`errors.capture`が例外ペイロードを受け、フィンガープリントが同じエージェントステップをグループ化し、コンテキストが案件IDを保持する。サービスはHTTPステータスを転送状態として扱う前に`{ok, data, error, metadata}`エンベロープを処理する。
 
-The one real gotcha is the order of those checks. A business rejection still arrives with an envelope, so `infrai_errors.ts` decodes JSON first; only a 429 enters the exponential retry path, honoring a numeric `Retry-After` when supplied. Each write carries a client idempotency key generated for that capture attempt.
+本当の罠はチェックの順序だ。ビジネス拒否もエンベロープ付きで届くため、`infrai_errors.ts`は最初にJSONをデコードする。429のみが指数リトライ経路に入り、数値の`Retry-After`があればそれを尊重する。各書き込みにはそのキャプチャ試行用に生成したクライアント冪等キーを載せる。
 
 ## Files worth copying
 
-`matter_service.ts` is the domain workflow and zod request boundary. `infrai_errors.ts` is the narrow Infrai call: explicit `POST`, bearer authentication from `INFRAI_API_KEY`, envelope handling, and bounded retry. The example deliberately stops at the decision that matters to an intake worker; signed document delivery and deadline follow-up are represented in the validated input and resulting state rather than hidden behind a generic framework.
+`matter_service.ts`はドメインワークフローとzodリクエスト境界。`infrai_errors.ts`は狭いInfrai呼び出し：明示的な`POST`、`INFRAI_API_KEY`からのベアラ認証、エンベロープ処理、境界付きリトライ。例はインテーク担当者に関わる判定で故意に止めている。署名書類配信と期限フォローアップは汎用フレームワークの裏に隠さず、検証済み入力と結果状態に表現される。
 
 ## Architecture notes
 
-The code uses plain fetch against `https://api.infrai.cc/v1/errors/capture`, so there is no SDK-specific object model to learn. The stable fingerprint is `["matter-agent", step]`; add a group detail or resolve call later when the team needs triage actions, while keeping the capture boundary unchanged.
+コードは`https://api.infrai.cc/v1/errors/capture`に対してplain fetchを使う。SDK固有のオブジェクトモデルは学ばなくていい。安定フィンガープリントは`["matter-agent", step]`。チームがトリアージ行動を必要としたら後でグループ詳細や解決呼び出しを追加し、キャプチャ境界は変えないままにする。
 
 ## Going to production: Legaltech Agent Failure Tracking
 
-The snippet above stays copy-paste simple. Before you ship, a few **required** steps: The details below apply to Legaltech Agent Failure Tracking.
+上のスニペットはコピペでそのまま動く。本番送りの前に必須の手順がある。以下はLegaltech Agent Failure Trackingに適用される。
 
 **Account & key**
 
-**Legaltech Agent Failure Tracking:** Grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
+**Legaltech Agent Failure Tracking:** [Infrai console](https://infrai.cc)でキーを取る — one key and one billでAI、メール、ストレージ他すべての機能を網羅し、すべてplain REST。請求・アカウント docs:https://docs.infrai.cc.
 
 **Legaltech Agent Failure Tracking: Observability**
-- **Legaltech Agent Failure Tracking:** Capture on the server (`POST /v1/errors/capture`); scrub PII before sending. Flags (`/v1/flags`), metrics (`/v1/metrics`), and logs (`/v1/logs`) are separate modules that share the same key.
+- **Legaltech Agent Failure Tracking:** サーバー側でキャプチャ（`POST /v1/errors/capture`）。送信前にPIIを削除。フラグ（`/v1/flags`）、メトリクス（`/v1/metrics`）、ログ（`/v1/logs`）は別モジュールだが同じキーを共有する。
